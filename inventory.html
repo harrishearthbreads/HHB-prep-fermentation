@@ -102,6 +102,29 @@
 
   .toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--crust);color:#fff;padding:11px 16px;border-radius:8px;font-size:13.5px;box-shadow:0 6px 20px rgba(0,0,0,0.25);display:none;z-index:9000;max-width:92vw;}
   .toast button{background:none;border:none;color:var(--wheat-dark);font-weight:700;font-size:13.5px;margin-left:12px;cursor:pointer;}
+
+  /* Item combobox */
+  .combo{position:relative;}
+  .sugg{margin-top:4px;background:#fff;border:1px solid var(--line);border-radius:6px;max-height:224px;overflow-y:auto;display:none;}
+  .sugg.open{display:block;}
+  .sugg div{padding:10px;cursor:pointer;font-size:15px;display:flex;justify-content:space-between;gap:10px;align-items:baseline;}
+  .sugg div small{font-size:11px;color:var(--crust-soft);white-space:nowrap;}
+  .sugg div:hover,.sugg div.on{background:#F3EBD2;}
+  .sugg .none{cursor:default;color:var(--crust-soft);font-size:13px;}
+  .sugg .none:hover{background:#fff;}
+  .confirm{display:none;margin-top:12px;padding:12px;border-radius:8px;background:#FBF3DA;border:1px solid #E6D597;font-size:13.5px;}
+  .confirm.open{display:block;}
+  .confirm p{margin:0 0 8px;font-weight:600;}
+  .confirm button{display:block;width:100%;text-align:left;margin-top:6px;padding:10px 11px;border-radius:6px;border:1px solid var(--line);background:#fff;font-family:'Inter',sans-serif;font-size:14px;font-weight:600;color:var(--crust);cursor:pointer;}
+  .confirm button:hover{border-color:var(--crust-soft);}
+  .confirm button.new{color:var(--wheat);}
+  .restock-btn{flex:none;align-self:center;background:var(--stocked);color:#fff;border:none;border-radius:6px;padding:9px 13px;font-family:'Inter',sans-serif;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;}
+  .restock-btn:hover{filter:brightness(1.08);}
+  .restock-btn:disabled{opacity:0.6;cursor:default;}
+  .log-controls select{min-width:0;}
+  .log-row .when{width:118px;}
+  .log-row .when b{display:block;font-weight:600;color:var(--crust);font-size:11px;letter-spacing:0.02em;text-transform:uppercase;opacity:0.6;}
+  @media (max-width:600px){ .log-row{flex-direction:column;gap:2px;} .log-row .when{width:auto;} .log-row .when b{display:inline;margin-right:6px;} .need{flex-wrap:wrap;} .restock-btn{width:100%;} }
 </style>
 </head>
 <body>
@@ -198,8 +221,10 @@
         <select id="category" required></select>
 
         <label for="itemName">Item</label>
-        <input type="text" id="itemName" list="itemList" maxlength="80" placeholder="Start typing or pick from the list" required>
-        <datalist id="itemList"></datalist>
+        <div class="combo">
+          <input type="text" id="itemName" maxlength="80" placeholder="Start typing; matching items appear" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="sugg" required>
+          <div class="sugg" id="sugg" role="listbox"></div>
+        </div>
 
         <label id="levelLabel">Stock level</label>
         <div class="seg" role="radiogroup" aria-labelledby="levelLabel">
@@ -212,9 +237,10 @@
         <label for="notes">Notes</label>
         <textarea id="notes" maxlength="300" placeholder="Quantity left, brand, where to buy, who needs it by..."></textarea>
 
+        <div class="confirm" id="confirm" role="alert"></div>
         <button class="btn" type="submit" id="submitBtn">Submit</button>
         <div class="msg" id="formMsg" role="status" aria-live="polite"></div>
-        <div class="hint">Logging an item that is already on the Needs list replaces its earlier entry.</div>
+        <div class="hint">Item names are standardized: new names are remembered and offered to everyone next time. Logging an item again overwrites its current line.</div>
       </form>
     </div>
   </div>
@@ -229,12 +255,16 @@
     </div>
 
     <div class="panel">
-      <div class="panel-head"><h2>Inventory Log</h2></div>
+      <div class="panel-head"><h2>Inventory Log</h2><span class="stamp">Current status of every item logged</span></div>
       <div class="log-controls">
         <select id="logCat" aria-label="Filter log by category"></select>
         <select id="logLevel" aria-label="Filter log by level">
           <option value="">All levels</option>
           <option>URGENT</option><option>LOW</option><option>MEDIUM</option><option>FULLY STOCKED</option>
+        </select>
+        <select id="logSort" aria-label="Sort log">
+          <option value="cat">Sort: category</option>
+          <option value="recent">Sort: last updated</option>
         </select>
       </div>
       <div id="log"></div>
@@ -245,25 +275,31 @@
 <div class="toast" id="toast" role="status" aria-live="polite"><span id="toastText"></span><button type="button" id="toastUndo">Undo</button></div>
 
 <script>
-/* Categories and item suggestions come from HHB_Inventory.xlsx. Items can also be typed freely. */
+/* Starting list of standardized item names (from HHB_Inventory.xlsx). Names people add are learned and shared. */
 const CATALOG = {
-  "Packaging Materials": ["Alto Panettone Molds","Baguette Bags","Basso Panettone Molds","Belly Buster Bread Bags","Cinnamon Roll Boxes","Cinnamon Roll Trays","Deli Containers","EM Bags","Focaccia \"Sleeves\"","Focaccia Foil Pans (Large)","Focaccia Foil Pans (Small)","HHB Stickers","Novacart Paper Loaf Pans","Panettini Molds","Panettini/Cookie Bags","Panettone Bags","Paper Order Bags","Scone \"Sleeves\"","Standard Bread Bags","Twist Ties"],
-  "Pantry Goods": ["Almond Extract","Almond Flour","Apricot Jam","Baking Powder","Baking Soda","Barley Malt","Brown Sugar","Cocoa Powder","Granulated Fine Sugar","Honey","Lemon Extract","Maple Syrup","Olive Oil","Pan Spray","Panettone Sugar","Pistachio Paste","Powdered Sugar","Raspberry Jam","Rice Flour","Salt","Strawberry Jam","Sunflower Oil","Vanilla Extract","Raspberry Powder","Mango Powder","Earl Grey Tea","Yeast"],
+  "Packaging Materials": ["Baguette Bags","Belly Buster Bread Bags","Cinnamon Roll Boxes","Cinnamon Roll Trays","Deli Containers","EM Bags","Focaccia \"Sleeves\"","Focaccia Foil Pans (Large)","Focaccia Foil Pans (Small)","HHB Stickers","Novacart Paper Loaf Pans","Panettini/Cookie Bags","Paper Order Bags","Scone \"Sleeves\"","Standard Bread Bags","Twist Ties"],
+  "Panettone Supplies": ["Alto Panettone Molds","Basso Panettone Molds","Panettini Molds","Panettone Bags","Panettone Sugar"],
+  "Common Baking Supplies": ["Almond Extract","Almond Flour","Apricot Jam","Baking Powder","Baking Soda","Barley Malt","Brown Sugar","Cocoa Powder","Granulated Fine Sugar","Honey","Lemon Extract","Maple Syrup","Olive Oil","Pan Spray","Powdered Sugar","Raspberry Jam","Rice Flour","Salt","Strawberry Jam","Sunflower Oil","Vanilla Extract","Raspberry Powder","Mango Powder","Earl Grey Tea","Yeast"],
   "Inclusions": ["Apricots","Black Sesame Seeds","Callebeaut Dark Chocolate","Candied Lemon","Candied Orange","Caraway Seeds","Castelvetrano Olives","Cinnamon","Couverture Dark Chocolate","Craisins","Dates","Dried Figs","Everything Seasoning","Fennel Seeds","Garlic","Hazelnuts","Kalamata Olives","Oatmeal","Oregano","Pistachio Paste","Pumpkin Seeds","Raisins","Sesame Seeds","Sour Cherries","Standard Dark Chocolate","Sundried Tomatoes","Thyme","Walnuts","White Chocolate","Candied Lemon Paste"],
+  "GU/CQ Flour": ["GU BF","GU AP","CQ TS"],
   "Specialty Flours": ["Barley Flour","Bloody Butcher Cornmeal","CM Hi Mountain","Dark Rye","Diastatic Malt Powder","King Arthur AP","Petra 0102","Petra 5037","Petra 5063","Petra 6384","Petra 8612","Petra 9"],
-  "Wheat Berries": ["Einkorn","Hard Red","Rouge de Bordeaux","Rye","Spelt","Wild Turkey Red","Red Fife"],
+  "Grains": ["Einkorn","Hard Red","Rouge de Bordeaux","Rye","Spelt","Wild Turkey Red","Red Fife"],
   "Frozen": ["Wild Blueberries","Raspberries","Basil Pesto","Sundried Tomato Pesto"]
 };
 const CATS = Object.keys(CATALOG);
 const API = "/api/inventory";
 const POLL_MS = 30000;
-let items = [];
+let items = [];            // current lines (one per item)
+let learned = [];          // names learned on the server: [{name, category}]
 let undoId = null, undoTimer = null;
+let hi = -1, shown = [];   // suggestion highlight state
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const tagClass = lv => lv.replace(/ /g, "-");
+const nkey = s => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
+/* ---------- API ---------- */
 function headers(){ return { "content-type":"application/json", "x-hhb-pin": window.HHB_PIN || "" }; }
 async function api(method, body){
   const res = await fetch(API, { method, headers: headers(), body: body ? JSON.stringify(body) : undefined, cache: "no-store" });
@@ -272,29 +308,110 @@ async function api(method, body){
   if(!res.ok) throw new Error(data.error || ("Request failed (" + res.status + ")"));
   return data;
 }
-
 function fmtWhen(iso){
   const d = new Date(iso); if(isNaN(d)) return "";
-  const now = new Date();
   const time = d.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" });
-  if(d.toDateString() === now.toDateString()) return "Today " + time;
+  if(d.toDateString() === new Date().toDateString()) return "Today " + time;
   return d.toLocaleDateString([], { month:"short", day:"numeric" }) + " " + time;
 }
+const stamp = it => it.updatedAt || it.createdAt;
+
+/* ---------- Standardized names ---------- */
+function allNames(){
+  const map = new Map();
+  CATS.forEach(c => CATALOG[c].forEach(n => map.set(nkey(n), { name:n, category:c, key:nkey(n) })));
+  learned.forEach(l => { const k = nkey(l.name); if(k && !map.has(k)) map.set(k, { name:l.name, category:l.category, key:k }); });
+  return [...map.values()];
+}
+function lev(a, b){
+  if(a === b) return 0;
+  const m = a.length, n = b.length; if(!m) return n; if(!n) return m;
+  let prev = Array.from({length:n+1}, (_, j) => j);
+  for(let i = 1; i <= m; i++){
+    const cur = [i];
+    for(let j = 1; j <= n; j++) cur[j] = Math.min(prev[j]+1, cur[j-1]+1, prev[j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
+}
+const words = s => String(s || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+const tol = w => w.length >= 7 ? 2 : w.length >= 4 ? 1 : 0;
+function score(q, name){
+  const nq = nkey(q), nn = nkey(name); if(!nq) return 0;
+  if(nq === nn) return 100;
+  if(nn.startsWith(nq)) return 85;
+  const qw = words(q), nw = words(name);
+  if(qw.length && qw.every(w => nw.some(x => x.startsWith(w)))) return 75;
+  if(nn.includes(nq)) return 65;
+  if(qw.length && qw.every(w => nw.some(x => x.startsWith(w) || lev(w, x) <= tol(w)))) return 58;
+  const t = nq.length >= 9 ? 3 : nq.length >= 5 ? 2 : nq.length >= 4 ? 1 : 0;
+  if(t && lev(nq, nn) <= t) return 55;
+  return 0;
+}
+function suggest(q, limit){
+  const cat = $("category").value;
+  const list = allNames();
+  if(!nkey(q)){
+    return list.filter(e => e.category === cat).sort((a,b) => a.name.localeCompare(b.name)).map(e => ({...e, score:1}));
+  }
+  return list.map(e => ({...e, score: score(q, e.name) + (e.category === cat ? 4 : 0)}))
+    .filter(e => e.score > 4 || (e.score > 0 && e.category !== cat))
+    .filter(e => score(q, e.name) > 0)
+    .sort((a,b) => b.score - a.score || a.name.localeCompare(b.name)).slice(0, limit || 8);
+}
+function tidy(raw){
+  let t = String(raw || "").replace(/\s+/g, " ").trim();
+  if(t.length > 3 && (t === t.toLowerCase() || t === t.toUpperCase())){
+    t = t.toLowerCase().replace(/(^|[\s\/\-(])([a-z])/g, (m, a, b) => a + b.toUpperCase());
+  }
+  return t;
+}
+
+/* ---------- Suggestion dropdown ---------- */
+function renderSugg(){
+  const q = $("itemName").value;
+  const cat = $("category").value;
+  shown = suggest(q, 8);
+  const box = $("sugg");
+  if(!cat && !nkey(q)){ box.classList.remove("open"); $("itemName").setAttribute("aria-expanded","false"); return; }
+  if(!shown.length){
+    box.innerHTML = nkey(q) ? `<div class="none">No match: "${esc(tidy(q))}" will be added as a new item.</div>` : `<div class="none">No items in this category yet. Type a name to add the first.</div>`;
+  } else {
+    box.innerHTML = shown.map((e, i) => `<div role="option" data-i="${i}" class="${i === hi ? "on" : ""}">${esc(e.name)}<small>${esc(e.category)}</small></div>`).join("");
+  }
+  box.classList.add("open"); $("itemName").setAttribute("aria-expanded","true");
+}
+function closeSugg(){ $("sugg").classList.remove("open"); $("itemName").setAttribute("aria-expanded","false"); hi = -1; }
+function pick(e){
+  $("itemName").value = e.name;
+  if(e.category !== $("category").value) $("category").value = e.category;
+  closeSugg(); hideConfirm();
+}
+$("itemName").addEventListener("input", () => { hi = -1; hideConfirm(); renderSugg(); });
+$("itemName").addEventListener("click", renderSugg);
+$("itemName").addEventListener("keydown", ev => {
+  const open = $("sugg").classList.contains("open") && shown.length;
+  if(ev.key === "ArrowDown" && open){ ev.preventDefault(); hi = (hi + 1) % shown.length; renderSugg(); }
+  else if(ev.key === "ArrowUp" && open){ ev.preventDefault(); hi = (hi - 1 + shown.length) % shown.length; renderSugg(); }
+  else if(ev.key === "Enter" && open && hi >= 0){ ev.preventDefault(); pick(shown[hi]); }
+  else if(ev.key === "Escape"){ closeSugg(); }
+});
+$("sugg").addEventListener("mousedown", ev => {
+  const row = ev.target.closest("[data-i]"); if(!row) return;
+  ev.preventDefault(); pick(shown[+row.getAttribute("data-i")]);
+});
+document.addEventListener("click", ev => { if(!ev.target.closest(".combo")) closeSugg(); });
+$("category").addEventListener("change", () => { hideConfirm(); closeSugg(); $("itemName").focus(); });
 
 function populateSelects(){
   $("category").innerHTML = '<option value="" disabled selected>Select a category</option>' + CATS.map(c => `<option>${esc(c)}</option>`).join("");
   $("logCat").innerHTML = '<option value="">All categories</option>' + CATS.map(c => `<option>${esc(c)}</option>`).join("");
 }
-$("category").addEventListener("change", () => {
-  $("itemList").innerHTML = (CATALOG[$("category").value] || []).map(n => `<option value="${esc(n)}"></option>`).join("");
-  $("itemName").value = "";
-  $("itemName").focus();
-});
 
-/* ---- Inventory Needs: URGENT first, then LOW; category order, then name, within each ---- */
+/* ---------- Inventory Needs (URGENT, then LOW; category order, then name) ---------- */
+const catIdx = c => { const k = CATS.indexOf(c); return k < 0 ? 99 : k; };
 function renderNeeds(){
-  const open = items.filter(i => i.status === "open" && (i.level === "URGENT" || i.level === "LOW"));
-  const catIdx = c => { const k = CATS.indexOf(c); return k < 0 ? 99 : k; };
+  const open = items.filter(i => i.level === "URGENT" || i.level === "LOW");
   open.sort((a,b) => (a.level === b.level ? 0 : a.level === "URGENT" ? -1 : 1) || catIdx(a.category) - catIdx(b.category) || a.name.localeCompare(b.name));
   if(!open.length){ $("needs").innerHTML = '<div class="empty">Nothing needed right now.</div>'; return; }
   let html = "";
@@ -304,40 +421,37 @@ function renderNeeds(){
     html += `<div class="sev-head ${lv}">${lv} <span class="count">(${group.length})</span></div>`;
     group.forEach(i => {
       html += `<div class="need ${lv}" data-id="${esc(i.id)}">
-        <input type="radio" name="clear-${esc(i.id)}" aria-label="Mark ${esc(i.name)} as purchased and clear it" title="Purchased: clear from list" data-clear="${esc(i.id)}">
         <div class="need-body">
           <div class="need-name">${esc(i.name)}</div>
-          <div class="need-meta">${esc(i.category)} &middot; logged ${esc(fmtWhen(i.createdAt))}</div>
+          <div class="need-meta">${esc(i.category)} &middot; Last updated ${esc(fmtWhen(stamp(i)))}</div>
           ${i.notes ? `<div class="need-notes">${esc(i.notes)}</div>` : ""}
-        </div></div>`;
+        </div>
+        <button type="button" class="restock-btn" data-restock="${esc(i.id)}" aria-label="Mark ${esc(i.name)} as restocked">Restocked</button></div>`;
     });
   });
   $("needs").innerHTML = html;
 }
 
+/* ---------- Inventory Log: current status of every item, until overwritten ---------- */
 function renderLog(){
-  const cat = $("logCat").value, lv = $("logLevel").value;
-  const rows = items.filter(i => (!cat || i.category === cat) && (!lv || i.level === lv)).slice(0, 150);
-  if(!rows.length){ $("log").innerHTML = '<div class="hint">No entries match.</div>'; return; }
-  $("log").innerHTML = rows.map(i => {
-    const closed = i.status !== "open";
-    const state = i.status === "cleared" ? "Purchased / cleared " + fmtWhen(i.clearedAt)
-                : i.status === "superseded" ? "Replaced by a newer entry" : "";
-    return `<div class="log-row ${closed ? "closed" : ""}">
-      <div class="when">${esc(fmtWhen(i.createdAt))}</div>
+  const cat = $("logCat").value, lv = $("logLevel").value, sort = $("logSort").value;
+  const rows = items.filter(i => (!cat || i.category === cat) && (!lv || i.level === lv));
+  if(sort === "recent") rows.sort((a,b) => (stamp(b) || "").localeCompare(stamp(a) || ""));
+  else rows.sort((a,b) => catIdx(a.category) - catIdx(b.category) || a.name.localeCompare(b.name));
+  if(!rows.length){ $("log").innerHTML = '<div class="hint">No items match.</div>'; return; }
+  $("log").innerHTML = rows.map(i => `<div class="log-row">
+      <div class="when"><b>Last updated</b>${esc(fmtWhen(stamp(i)))}</div>
       <div class="what"><span class="tag ${tagClass(i.level)}">${esc(i.level)}</span><strong>${esc(i.name)}</strong>
         <span class="state"> &middot; ${esc(i.category)}</span>
-        ${i.notes ? `<div>${esc(i.notes)}</div>` : ""}
-        ${state ? `<div class="state">${esc(state)}</div>` : ""}</div></div>`;
-  }).join("");
+        ${i.notes ? `<div>${esc(i.notes)}</div>` : ""}</div></div>`).join("");
 }
-
 function renderAll(){ renderNeeds(); renderLog(); }
 
 async function load(quiet){
   try{
     const data = await api("GET");
     items = data.items || [];
+    learned = data.catalog || [];
     renderAll();
     $("stamp").textContent = "Updated " + new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" });
   }catch(e){
@@ -346,46 +460,75 @@ async function load(quiet){
   }
 }
 
+/* ---------- Submit with name standardization ---------- */
 function formMsg(kind, text){ const m = $("formMsg"); m.className = "msg " + kind; m.textContent = text; }
+function hideConfirm(){ const c = $("confirm"); c.classList.remove("open"); c.innerHTML = ""; }
 
-$("invForm").addEventListener("submit", async ev => {
-  ev.preventDefault();
-  const category = $("category").value, name = $("itemName").value.trim();
+async function save(category, name, isNew){
   const lvEl = document.querySelector('input[name="level"]:checked');
-  if(!category) return formMsg("err", "Choose a category.");
-  if(!name) return formMsg("err", "Enter the item name.");
-  if(!lvEl) return formMsg("err", "Choose a stock level.");
   $("submitBtn").disabled = true;
+  hideConfirm();
   try{
-    await api("POST", { action:"add", category, name, level: lvEl.value, notes: $("notes").value });
-    formMsg("ok", name + " logged as " + lvEl.value + ".");
+    const res = await api("POST", { action:"add", category, name, level: lvEl.value, notes: $("notes").value });
+    if(isNew && !learned.some(l => nkey(l.name) === nkey(res.item.name))) learned.push({ name: res.item.name, category });
+    formMsg("ok", res.item.name + " logged as " + lvEl.value + (isNew ? " (new item remembered for next time)" : "") + ".");
+    $("category").value = category;
     $("itemName").value = ""; $("notes").value = "";
     document.querySelectorAll('input[name="level"]').forEach(r => r.checked = false);
     await load(true);
-    $("itemName").focus();
   }catch(e){
     formMsg("err", "Not saved: " + e.message + ". Try again.");
   }finally{
     $("submitBtn").disabled = false;
   }
+}
+
+$("invForm").addEventListener("submit", ev => {
+  ev.preventDefault();
+  closeSugg();
+  let category = $("category").value;
+  const typed = tidy($("itemName").value);
+  const lvEl = document.querySelector('input[name="level"]:checked');
+  if(!category) return formMsg("err", "Choose a category.");
+  if(!typed) return formMsg("err", "Enter the item name.");
+  if(!lvEl) return formMsg("err", "Choose a stock level.");
+
+  const exact = allNames().find(e => e.key === nkey(typed));
+  if(exact) return save(exact.category, exact.name, false);
+
+  const close = suggest(typed, 3).filter(e => score(typed, e.name) >= 55);
+  if(!close.length) return save(category, typed, true);
+
+  const box = $("confirm");
+  box.innerHTML = `<p>Did you mean one of these? Using the standard name keeps the list clean.</p>` +
+    close.map((e, i) => `<button type="button" data-use="${i}">Use "${esc(e.name)}" <span style="font-weight:400;color:var(--crust-soft)">(${esc(e.category)})</span></button>`).join("") +
+    `<button type="button" class="new" data-new="1">No, add "${esc(typed)}" as a new item</button>`;
+  box.classList.add("open");
+  box._close = close; box._typed = typed;
+});
+$("confirm").addEventListener("click", ev => {
+  const b = ev.target.closest("button"); if(!b) return;
+  const box = $("confirm");
+  if(b.hasAttribute("data-use")){ const e = box._close[+b.getAttribute("data-use")]; save(e.category, e.name, false); }
+  else if(b.hasAttribute("data-new")){ save($("category").value, box._typed, true); }
 });
 
-/* ---- Clear (radio) with undo ---- */
-$("needs").addEventListener("change", async ev => {
-  const id = ev.target.getAttribute && ev.target.getAttribute("data-clear");
-  if(!id) return;
+/* ---------- Restocked ---------- */
+$("needs").addEventListener("click", async ev => {
+  const btn = ev.target.closest("[data-restock]"); if(!btn) return;
+  const id = btn.getAttribute("data-restock");
   const it = items.find(i => i.id === id);
-  const card = ev.target.closest(".need");
-  card.classList.add("leaving");
+  btn.disabled = true; btn.textContent = "Saving...";
+  const card = btn.closest(".need");
   try{
-    await api("POST", { action:"clear", id });
-    undoId = id;
-    showToast((it ? it.name : "Item") + " cleared", true);
+    const res = await api("POST", { action:"restock", id });
+    card.classList.add("leaving");
+    undoId = res.item.id;
+    showToast((it ? it.name : "Item") + " restocked: logged as FULLY STOCKED", true);
     setTimeout(() => load(true), 350);
   }catch(e){
-    card.classList.remove("leaving");
-    ev.target.checked = false;
-    showToast("Could not clear: " + e.message, false);
+    btn.disabled = false; btn.textContent = "Restocked";
+    showToast(e.message, false); load(true);
   }
 });
 function showToast(text, withUndo){
@@ -398,12 +541,13 @@ function showToast(text, withUndo){
 $("toastUndo").addEventListener("click", async () => {
   if(!undoId) return;
   const id = undoId; undoId = null; $("toast").style.display = "none";
-  try{ await api("POST", { action:"reopen", id }); }catch(e){ showToast("Could not undo: " + e.message, false); }
+  try{ await api("POST", { action:"undo", id }); }catch(e){ showToast("Could not undo: " + e.message, false); }
   load(true);
 });
 
 $("logCat").addEventListener("change", renderLog);
 $("logLevel").addEventListener("change", renderLog);
+$("logSort").addEventListener("change", renderLog);
 $("refreshBtn").addEventListener("click", () => load(false));
 document.addEventListener("visibilitychange", () => { if(!document.hidden) load(true); });
 

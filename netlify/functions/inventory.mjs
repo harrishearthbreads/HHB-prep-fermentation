@@ -1,15 +1,18 @@
-// Shared inventory log for tools.harrishearthbreads.com (Inventory tab).
-// One blob per entry (key = id), so two people submitting at once never collide.
-//   GET  /api/inventory                      -> { items: [...] }  (newest first)
-//   POST /api/inventory {action:"add",...}   -> adds an entry; any open entry for the
-//                                               same category + item is marked "superseded"
-//   POST /api/inventory {action:"clear",id}  -> marks an open entry "cleared" (purchased)
-//   POST /api/inventory {action:"reopen",id} -> undo a clear
+// Shared inventory for tools.harrishearthbreads.com (Inventory tab).
+// Two Netlify Blobs stores, one blob per record so simultaneous edits never collide:
+//   "inventory": one record per current line (key = id)
+//   "catalog":   learned standardized item names (key = name with punctuation/case/spacing removed)
+//
+//   GET  /api/inventory                         -> { items:[open lines], catalog:[{name,category}] }
+//   POST {action:"add", category,name,level,notes}
+//        Standardizes the name against the catalog, overwrites any open line for the same item.
+//   POST {action:"restock", id}   -> overwrites that line with a FULLY STOCKED line
+//   POST {action:"undo", id}      -> undo a restock (id = the new FULLY STOCKED line)
 import { getStore } from "@netlify/blobs";
 
 const PIN = (typeof process !== "undefined" && process.env && process.env.INVENTORY_PIN) || "0214";
 const LEVELS = ["URGENT", "LOW", "MEDIUM", "FULLY STOCKED"];
-const KEEP_DAYS = 120; // closed entries older than this are pruned on read
+const KEEP_OVERWRITTEN_DAYS = 7; // overwritten lines are kept briefly so Undo works, never shown
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -18,29 +21,37 @@ const json = (data, status = 200) =>
   });
 
 const clean = (v, max) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, max);
-const keyOf = (c, n) => (c + "|" + n).toLowerCase();
+export const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-async function listAll(store) {
+async function readAll(store) {
   const { blobs } = await store.list();
-  const items = (
-    await Promise.all(blobs.map((b) => store.get(b.key, { type: "json" }).catch(() => null)))
-  ).filter(Boolean);
-  const cutoff = Date.now() - KEEP_DAYS * 86400000;
-  const keep = [];
-  for (const it of items) {
-    const closedAt = it.clearedAt || it.supersededAt;
-    if (it.status !== "open" && closedAt && Date.parse(closedAt) < cutoff) {
-      await store.delete(it.id).catch(() => {});
-    } else keep.push(it);
-  }
-  keep.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
-  return keep;
+  return (await Promise.all(blobs.map((b) => store.get(b.key, { type: "json" }).catch(() => null)))).filter(Boolean);
 }
 
-export async function handle(req, store) {
+async function openLines(store) {
+  const all = await readAll(store);
+  const cutoff = Date.now() - KEEP_OVERWRITTEN_DAYS * 86400000;
+  const open = [];
+  for (const it of all) {
+    if (it.status === "open") open.push(it);
+    else {
+      const at = Date.parse(it.supersededAt || it.updatedAt || it.createdAt || "") || 0;
+      if (at < cutoff) await store.delete(it.id).catch(() => {});
+    }
+  }
+  open.sort((a, b) => (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || ""));
+  return open;
+}
+
+const newId = (now) => now.replace(/\D/g, "") + "-" + Math.random().toString(36).slice(2, 8);
+
+export async function handle(req, store, catalog) {
   if (req.headers.get("x-hhb-pin") !== PIN) return json({ error: "Not authorized" }, 401);
 
-  if (req.method === "GET") return json({ items: await listAll(store), serverTime: new Date().toISOString() });
+  if (req.method === "GET") {
+    const learned = (await readAll(catalog)).map((c) => ({ name: c.name, category: c.category }));
+    return json({ items: await openLines(store), catalog: learned, serverTime: new Date().toISOString() });
+  }
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   let body;
@@ -49,39 +60,55 @@ export async function handle(req, store) {
 
   if (body.action === "add") {
     const category = clean(body.category, 60);
-    const name = clean(body.name, 80);
+    let name = clean(body.name, 80);
     const level = clean(body.level, 20).toUpperCase();
     const notes = clean(body.notes, 300);
-    if (!category || !name) return json({ error: "Category and item name are required" }, 400);
+    if (!category || !name || !norm(name)) return json({ error: "Category and item name are required" }, 400);
     if (!LEVELS.includes(level)) return json({ error: "Invalid level" }, 400);
 
-    const existing = await listAll(store);
-    for (const it of existing) {
-      if (it.status === "open" && keyOf(it.category, it.name) === keyOf(category, name)) {
-        await store.setJSON(it.id, { ...it, status: "superseded", supersededAt: now });
-      }
+    // Standardize: if this item (ignoring case, spacing, punctuation) is already known, use its name.
+    const key = norm(name);
+    const known = await catalog.get(key, { type: "json" }).catch(() => null);
+    if (known) name = known.name;
+    else await catalog.setJSON(key, { name, category, addedAt: now });
+
+    for (const it of await openLines(store)) {
+      if (norm(it.name) === key) await store.setJSON(it.id, { ...it, status: "superseded", supersededAt: now });
     }
-    const id = now.replace(/\D/g, "") + "-" + Math.random().toString(36).slice(2, 8);
-    const item = { id, category, name, level, notes, status: "open", createdAt: now, clearedAt: null };
+    const id = newId(now);
+    const item = { id, category, name, level, notes, status: "open", createdAt: now, updatedAt: now };
     await store.setJSON(id, item);
     return json({ ok: true, item });
   }
 
-  if (body.action === "clear" || body.action === "reopen") {
+  if (body.action === "restock") {
     const id = clean(body.id, 80);
     const it = id ? await store.get(id, { type: "json" }).catch(() => null) : null;
     if (!it) return json({ error: "Entry not found" }, 404);
-    const next =
-      body.action === "clear"
-        ? { ...it, status: "cleared", clearedAt: now }
-        : { ...it, status: "open", clearedAt: null };
-    await store.setJSON(id, next);
-    return json({ ok: true, item: next });
+    if (it.status !== "open") return json({ error: "That line was already updated. Refresh to see the latest." }, 409);
+    await store.setJSON(it.id, { ...it, status: "superseded", supersededAt: now });
+    const nid = newId(now);
+    const item = { id: nid, category: it.category, name: it.name, level: "FULLY STOCKED", notes: "", status: "open", createdAt: now, updatedAt: now, prevId: it.id };
+    await store.setJSON(nid, item);
+    return json({ ok: true, item });
+  }
+
+  if (body.action === "undo") {
+    const id = clean(body.id, 80);
+    const cur = id ? await store.get(id, { type: "json" }).catch(() => null) : null;
+    if (!cur || !cur.prevId) return json({ error: "Nothing to undo" }, 404);
+    if (cur.status !== "open") return json({ error: "That line was already updated by someone else." }, 409);
+    const prev = await store.get(cur.prevId, { type: "json" }).catch(() => null);
+    if (!prev) return json({ error: "Original line no longer available" }, 404);
+    const { supersededAt, ...rest } = prev;
+    await store.setJSON(prev.id, { ...rest, status: "open" });
+    await store.delete(cur.id).catch(() => {});
+    return json({ ok: true, item: { ...rest, status: "open" } });
   }
 
   return json({ error: "Unknown action" }, 400);
 }
 
-export default async (req) => handle(req, getStore("inventory"));
+export default async (req) => handle(req, getStore("inventory"), getStore("catalog"));
 
 export const config = { path: "/api/inventory" };
