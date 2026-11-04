@@ -70,11 +70,11 @@
     display:flex; align-items:center; justify-content:center; flex:none;
   }
   .brand-mark img{
-    display:block; height:64px; width:auto;
+    display:block; height:88px; width:auto;
     filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));
   }
   @media (max-width: 480px){
-    .brand-mark img{ height:46px; }
+    .brand-mark img{ height:60px; }
     .brand-text .display{ font-size:17px; }
   }
   .brand-text .display{ font-family: var(--font-display); font-weight:600; letter-spacing:-0.01em; font-size: 20px; color: var(--flour-hi); margin:0; line-height:1.1; }
@@ -113,7 +113,7 @@
     padding: 22px; box-shadow: var(--shadow);
   }
 
-  .new-batch-panel{ position: sticky; top: 96px; }
+  .new-batch-panel{ position: sticky; top: 144px; }
   @media (max-width: 900px){
     .new-batch-panel{ position: static; }
   }
@@ -435,7 +435,7 @@
 </style>
 <script>
 (function(){
-  var SITE_PIN = "1234"; // <-- change this to your own 4-digit code (update in BOTH files)
+  var SITE_PIN = "0214"; // <-- change this to your own 4-digit code (update in BOTH files)
   var STORAGE_KEY = "hhb_site_unlocked";
 
   function storageGet(key){
