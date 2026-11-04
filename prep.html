@@ -981,8 +981,46 @@ const DEFAULT_RECIPES = [
       { name: "Vanilla paste", pct: 2.1, group: "other" },
       { name: "Chocolate chips", pct: 85.4, group: "inclusion" }
     ]
+  },
+  {
+    id: "panettone-classico-master-v3",
+    builtin: true,
+    name: "Panettone Classico (Master v3)",
+    category: "Panettone",
+    productType: "other",
+    unitLabel: "piece",
+    unitWeightG: 800,
+    notes: "Master recipe v3 (30 kg batch, Dallagiovanna flour), from Panettone Master Reference 2026. Percentages are on total flour (Primo + Secondo = 100%, pasta madre flour not counted), so 100% = 71.5% Primo + 28.5% Secondo. Mix the Primo and Secondo as separate doughs; ingredient names are prefixed Primo / Secondo. Pasta madre equals the Primo sugar and is shown as a fixed row (no inoculation or hydration solve). Classico fruit load is raisins 55% / candied orange 45% of the 92%. Flavored versions change the Secondo (ganache cuts to sugar, butter, water) and the inclusions; use the Master Calculator sheet for those. PRIMO: sugar dissolved in the water; madre in at speed 2-3, develop to near full before fat; butter in three steps, then yolk, stop at absorption; close at 23-24 C; ferment uncovered 11-12 h to 2.5-2.7x (2.3-2.5x if it waits in the cold). SECONDO: cool Primo to 18-19 C; Primo, flour and all the water together at the very start; sugar in three steps; honey; yolk with salt and malt in the last portion; butter in 2-3 steps, then 1-2 min faster; rest 5-6 min; fruit last, low speed 1-2 min; out at 25-26 C. Bulk 60-75 min at 25-26 C; preshape 45 min uncovered; proof 27-30 C, 4-6.5 h. Bake: load at 140-145 C with elements off 20 min, climb to about 165 C; core 92-96 C; hang upside down 6 h. Total flour rounds up to the next 100 g here, so a 30 kg request gives slightly more dough than the master (7,000 g flour vs 6,985 g). Default 800 g is a placeholder; dough weight per mould is not final (see reference), set the weight you are panning.",
+    ingredients: [
+      { name: "Primo: Water (Primo sugar dissolved in it)", pct: 38.54, group: "water" },
+      { name: "Primo: Sugar", pct: 21.43, group: "other" },
+      { name: "Primo: Pasta madre (= Primo sugar)", pct: 21.43, group: "other" },
+      { name: "Primo: Dallagiovanna panettone flour", pct: 71.5, group: "flour" },
+      { name: "Primo: Butter, 16-18 C", pct: 29.28, group: "fat" },
+      { name: "Primo: Egg yolks, room temp", pct: 18.05, group: "other" },
+      { name: "Secondo: Dallagiovanna panettone flour", pct: 28.5, group: "flour" },
+      { name: "Secondo: Water (all at the very start)", pct: 12.84, group: "water" },
+      { name: "Secondo: Sugar", pct: 20.92, group: "other" },
+      { name: "Secondo: Honey", pct: 5.76, group: "other" },
+      { name: "Secondo: Egg yolks", pct: 23.94, group: "other" },
+      { name: "Secondo: Salt", pct: 1.8, group: "salt" },
+      { name: "Secondo: Diastatic malt (with last yolk)", pct: 1.0, group: "other" },
+      { name: "Secondo: Butter, 16-18 C", pct: 42.12, group: "fat" },
+      { name: "Secondo: Aromas (oil-based, with last butter)", pct: 0.39, group: "other" },
+      { name: "Secondo: Raisins", pct: 50.59, group: "inclusion" },
+      { name: "Secondo: Candied orange", pct: 41.39, group: "inclusion" }
+    ]
   }
 ];
+
+// Built-in recipes flagged builtin:true are always present, even when the
+// browser's saved library or the Google Sheet doesn't contain them.
+function ensureBuiltins(){
+  DEFAULT_RECIPES.filter(r => r.builtin).forEach(b => {
+    const have = library.some(r => r.id === b.id || (r.name || "").toLowerCase() === b.name.toLowerCase());
+    if(!have) library.push(JSON.parse(JSON.stringify(b)));
+  });
+}
 
 const STORAGE_KEY = "hhb_prep_calc_library_v5";
 const SHEET_URL_OVERRIDE_KEY = "hhb_sheet_url_override";
@@ -1239,6 +1277,7 @@ async function initLibrary(){
       if(Array.isArray(parsed) && parsed.length){
         library = parsed;
         librarySource = "local";
+        ensureBuiltins();
         const last = lastSyncLabel();
         return { state:"info", message:
           "Loaded " + recipeCountText(library) + " saved in this browser" +
@@ -1254,6 +1293,7 @@ async function initLibrary(){
     try{
       const { recipes, warnings } = await fetchSheetRecipes(url);
       library = recipes;
+      ensureBuiltins();
       lastSheetWarnings = warnings;
       librarySource = "sheet";
       saveLibrary();
@@ -1290,6 +1330,7 @@ async function syncFromServer(){
   try{
     const { recipes, warnings } = await fetchSheetRecipes(url);
     library = recipes;
+    ensureBuiltins();
     lastSheetWarnings = warnings;
     librarySource = "sheet";
     saveLibrary();
@@ -2181,7 +2222,7 @@ async function deleteRecipe(id){
   }
 }
 function resetLibrary(){
-  if(!confirm("Reset to the 5 default HHB recipes? This removes any recipes you've added.")) return;
+  if(!confirm("Reset to the built-in HHB recipes? This removes any recipes you've added.")) return;
   library = JSON.parse(JSON.stringify(DEFAULT_RECIPES));
   librarySource = "local";
   saveLibrary();
